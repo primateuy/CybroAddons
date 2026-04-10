@@ -30,18 +30,6 @@ patch(RewardButton.prototype,{
         return freeProductRewards.concat(result);
     },
 
-     _getBaseCouponBalance(couponId) {
-        return this.pos.couponCache[couponId]?.balance || 0;
-    },
-
-     _hasBaseBalanceForReward(reward, couponId) {
-        const baseBalance = this._getBaseCouponBalance(couponId);
-        if (reward.clear_wallet) {
-            return baseBalance > 0;
-        }
-        return baseBalance >= (reward.required_points || 0);
-    },
-
      _getPotentialRewards() {
      //---Reward type redemption is included in the list of claimable rewards---
         const order = this.pos.get_order();
@@ -59,20 +47,13 @@ patch(RewardButton.prototype,{
                 pointCheck = true
             }
         }
-        const discountRewards = rewards.filter(({ reward, coupon_id }) =>
-            reward.reward_type == "discount" &&
-            this._hasBaseBalanceForReward(reward, coupon_id)
-        );
+        const discountRewards = rewards.filter(({ reward }) => reward.reward_type == "discount");
         const freeProductRewards = rewards.filter(({ reward }) => reward.reward_type == "product");
-        const redemption = rewards.filter(({ reward, coupon_id }) => {
-        if (reward.reward_type != "redemption") {
-            return false;
-        }
-        return reward.max_redemption_amount < order.get_subtotal() &&
-        pointCheck == true &&
-        reward.redemption_frequency > this.state.frequency &&
-        this._getBaseCouponBalance(coupon_id) >= (reward.redemption_eligibility || 0);
-        });
+        const redemption = rewards.filter(({ reward }) => reward.reward_type == "redemption" &&
+        reward.max_redemption_amount < order.get_subtotal() &&
+        pointCheck == true
+        && reward.redemption_frequency > this.state.frequency
+        );
         if(order.partner != null){
             var checkFrequency =  this.check(rewards)
         }
