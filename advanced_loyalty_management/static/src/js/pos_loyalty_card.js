@@ -33,6 +33,7 @@ patch(Order.prototype,{
                 r => r.program_id === program && r.reward_type === 'redemption'
             );
             if (redemptionReward?.rounding_mode) {
+                change.raw_points = change.points;
                 change.points = _applyRounding(
                     change.points,
                     redemptionReward.rounding_precision ?? 0,
@@ -40,6 +41,16 @@ patch(Order.prototype,{
                 );
             }
         }
+    },
+
+    _getProgramRedemptionReward(program) {
+        const programId = program?.id ?? program;
+        return this.pos.rewards.find(
+            (reward) => {
+                const rewardProgramId = reward.program_id?.id ?? reward.program_id;
+                return rewardProgramId === programId && reward.reward_type === 'redemption';
+            }
+        );
     },
 
     _getRewardLineValues(args) {
@@ -120,11 +131,16 @@ patch(Order.prototype,{
             let [won, spent, total] = [0, 0, 0];
 
             var balance = loyaltyCard.balance;
+            const redemptionReward = this._getProgramRedemptionReward(program);
+            const basePoints = redemptionReward?.rounding_mode &&
+                pointChange.raw_points !== undefined
+                ? pointChange.raw_points
+                : points;
             if(this.pos.get_order().convertToLoyalty == undefined){
-                won += points - this._getPointsCorrection(program);
+                won += basePoints - this._getPointsCorrection(program);
             }
             else{
-                won += points - this._getPointsCorrection(program);
+                won += basePoints - this._getPointsCorrection(program);
                 if(program_id === this.pos.get_order().programToAdd){
                     won += this.pos.get_order().convertToLoyalty;
                 }
@@ -144,6 +160,13 @@ patch(Order.prototype,{
                         }
                     }
                 }
+            }
+            if (redemptionReward?.rounding_mode) {
+                won = _applyRounding(
+                    won,
+                    redemptionReward.rounding_precision ?? 0,
+                    redemptionReward.rounding_mode
+                );
             }
             if (coupon_id !== 0) {
                 for (const line of this._get_reward_lines()) {
