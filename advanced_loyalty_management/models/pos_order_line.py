@@ -39,6 +39,39 @@ class PosOrderLine(models.Model):
         pos_order_line.points_remaining = balance[0]
 
     @api.model
+    def _deduct_redemption_points_for_order(self, order):
+        """Persist spent Redemption points from saved POS reward lines."""
+        if not order:
+            return {}
+
+        reward_lines = order.lines.filtered(
+            lambda line: (
+                line.is_reward_line
+                and line.coupon_id
+                and line.reward_id
+                and line.reward_id.reward_type == 'redemption'
+            )
+        )
+        if not reward_lines:
+            return {}
+
+        remaining_points = {}
+        for loyalty_card in reward_lines.mapped('coupon_id').sudo():
+            card_reward_lines = reward_lines.filtered(
+                lambda line: line.coupon_id.id == loyalty_card.id
+            )
+            spent_points = sum(card_reward_lines.mapped('points_cost'))
+            if spent_points:
+                loyalty_card.write({'points': loyalty_card.points - spent_points})
+            remaining_points[loyalty_card.id] = loyalty_card.points
+
+        for reward_line in reward_lines:
+            reward_line.points_remaining = remaining_points.get(
+                reward_line.coupon_id.id, reward_line.points_remaining
+            )
+        return remaining_points
+
+    @api.model
     def deduct_loyalty_points(self, coupon_id, points_spent, token):
         """Deduct all claimed reward points from the order loyalty cards.
 
@@ -49,25 +82,4 @@ class PosOrderLine(models.Model):
         order = self.env['pos.order'].search([('access_token', '=', token[0])], limit=1)
         if not order:
             return
-
-        reward_lines = self.env['pos.order.line'].search([
-            ('order_id', '=', order.id),
-            ('is_reward_line', '=', True),
-            ('coupon_id', '!=', False),
-        ])
-        if not reward_lines:
-            return
-
-        remaining_points = {}
-        for loyalty_card in reward_lines.mapped('coupon_id').sudo():
-            card_reward_lines = reward_lines.filtered(
-                lambda line: line.coupon_id.id == loyalty_card.id
-            )
-            loyalty_card.points -= sum(card_reward_lines.mapped('points_cost'))
-            remaining_points[loyalty_card.id] = loyalty_card.points
-
-        for reward_line in reward_lines:
-            reward_line.points_remaining = remaining_points.get(
-                reward_line.coupon_id.id, reward_line.points_remaining
-            )
-        return remaining_points
+        return self._deduct_redemption_points_for_order(order)

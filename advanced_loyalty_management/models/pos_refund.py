@@ -27,6 +27,7 @@ class PosOrder(models.Model):
     _inherit = 'pos.order'
 
     check = fields.Boolean()
+    redemption_points_deducted = fields.Boolean(default=False)
 
     def _compute_order_name(self):
         """Compute the loyalty points when order is refunded"""
@@ -81,6 +82,30 @@ class PosOrder(models.Model):
                         program.points += reward_points
 
         return res
+
+    @api.model
+    def create_from_ui(self, orders, draft=False):
+        """Persist Redemption point spend independently of frontend post-process."""
+        result = super().create_from_ui(orders, draft)
+        if draft:
+            return result
+
+        order_ids = [
+            order_data.get('id')
+            for order_data in (result or [])
+            if isinstance(order_data, dict) and order_data.get('id')
+        ]
+        if not order_ids:
+            return result
+
+        pos_orders = self.browse(order_ids).filtered(
+            lambda order: not order.redemption_points_deducted
+        )
+        for order in pos_orders:
+            remaining_points = self.env['pos.order.line']._deduct_redemption_points_for_order(order)
+            if remaining_points:
+                order.redemption_points_deducted = True
+        return result
 
     @api.model
     def _process_order(self, order, draft, existing_order):

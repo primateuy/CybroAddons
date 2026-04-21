@@ -4,31 +4,71 @@ import { PaymentScreen } from "@point_of_sale/app/screens/payment_screen/payment
 import { patch } from "@web/core/utils/patch";
 
 patch(PaymentScreen.prototype, {
-    async afterOrderValidation(suggestToSync = true) {
-        const order = this.pos.get_order();
-        const rewardCouponIds = [
-            ...new Set(
-                (order?._get_reward_lines?.() || [])
-                    .filter((line) => line.coupon_id)
-                    .map((line) => line.coupon_id)
-            ),
-        ];
+    async _postPushOrderResolve(order, server_ids) {
+        const originalPoints = {};
+        const originalBalances = {};
+        const redemptionSpentByCoupon = {};
+        const rewardLines = order?._get_reward_lines?.() || [];
 
-        const res = await super.afterOrderValidation(...arguments);
+        for (const line of rewardLines) {
+            const reward = this.pos.reward_by_id?.[line.reward_id];
+            if (reward?.reward_type !== "redemption" || !line.coupon_id) {
+                continue;
+            }
+            const numId = Number(line.coupon_id);
+            redemptionSpentByCoupon[numId] =
+                (redemptionSpentByCoupon[numId] || 0) + (Number(line.points_cost) || 0);
+        }
 
-        if (rewardCouponIds.length) {
-            const remainingPoints = await this.env.services.orm.call(
-                'pos.order.line', 'deduct_loyalty_points',
-                [[], [], [order.access_token]]
-            );
-            for (const couponId of rewardCouponIds) {
-                const currentCoupon = this.pos.couponCache[couponId];
-                const updatedBalance = remainingPoints?.[couponId];
-                if (currentCoupon && updatedBalance !== undefined) {
-                    currentCoupon.balance = updatedBalance;
+        for (const [couponId, spentPoints] of Object.entries(redemptionSpentByCoupon)) {
+            const numId = Number(couponId);
+            const pointChange = order?.couponPointChanges?.[numId];
+            if (!pointChange) {
+                continue;
+            }
+            
+            originalPoints[numId] = pointChange.points;
+            const coupon = this.pos.couponCache?.[numId];
+            if (coupon) {
+                originalBalances[numId] = coupon.balance;
+            }
+            const program = this.pos.program_by_id?.[pointChange.program_id];
+            const correction = order._getPointsCorrection?.(program) || 0;
+            
+            pointChange.points = spentPoints + correction;
+        }
+
+        try {
+            const result = await super._postPushOrderResolve(...arguments);
+            
+            for (const [couponId, spentPoints] of Object.entries(redemptionSpentByCoupon)) {
+                const numId = Number(couponId);
+                if (!(numId in originalBalances)) {
+                    continue;
+                }
+                const earned = originalPoints[numId] || 0;
+                const correctBalance = originalBalances[numId] + earned - spentPoints;
+                const currentCoupon = this.pos.couponCache?.[numId];
+                if (currentCoupon) {
+                    currentCoupon.balance = correctBalance;
+                }
+                const partnerId = currentCoupon?.partner_id;
+                const partner = partnerId
+                    ? this.pos.db?.get_partner_by_id?.(partnerId)
+                    : null;
+                if (partner?.loyalty_cards?.[numId] !== undefined) {
+                    partner.loyalty_cards[numId].points = correctBalance;
+                }
+            }
+            return result;
+        } finally {
+            for (const [couponId, originalPoint] of Object.entries(originalPoints)) {
+                const numId = Number(couponId);
+                const pointChange = order?.couponPointChanges?.[numId];
+                if (pointChange) {
+                    pointChange.points = originalPoint;
                 }
             }
         }
-        return res;
     },
 });
