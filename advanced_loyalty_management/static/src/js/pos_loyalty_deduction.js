@@ -4,6 +4,15 @@ import { roundPrecision } from "@web/core/utils/numbers";
 import { _t } from "@web/core/l10n/translation";
 import { patch } from "@web/core/utils/patch";
 
+function _applyRounding(points, precision, mode) {
+    const factor = Math.pow(10, precision);
+    switch (mode) {
+        case 'up':   return Math.ceil(points * factor) / factor;
+        case 'down': return Math.floor(points * factor) / factor;
+        default:     return Math.round(points * factor) / factor;
+    }
+}
+
 patch(Order.prototype, {
 
     deductLoyaltyPoints(product) {
@@ -88,6 +97,19 @@ patch(Order.prototype, {
                             }
                         });
                         let currentBalance = balance - res;
+
+//                        BUSCO SI TIENE REDEMPTION REWARD PARA APLICAR EL REDONDEO
+                        const redemptionReward = this.pos.rewards.find(
+                            r => r.program_id === program && r.reward_type === 'redemption'
+                        );
+//                        LE APLICO EL REDONDEO DE LA REDEMPTION REWARD A LOS PUNTOS PERDIDOS SOLO SI EXISTE LA REDEMPTION REWARD Y SI TIENE MODO DE REDONDEO, SINO DEJO LOS PUNTOS PERDIDOS COMO ESTAN
+                        if (redemptionReward.rounding_mode) {
+                            res = _applyRounding(
+                                res,
+                                redemptionReward.rounding_precision ?? 0,
+                                redemptionReward.rounding_mode
+                            );
+                        }
                         valsList.push({ lostPoint: res, newPoint: currentBalance.toFixed(2), programName: programs.name, ruleId: ruleId });
                     }
                 });
