@@ -58,12 +58,7 @@ patch(TicketScreen.prototype, {
                 const quantity = Math.abs(parseFloat(buffer));
                 if(orderline.is_reward_line == true){
                 if(quantity > 0){
-                    this.popup.add(ErrorPopup, {
-                        title: _t("REFUND NOT POSSIBLE"),
-                        body: _t(
-                            "You cannot refund a rewarded line",
-                        ),
-                    });
+                    toRefundDetail.qty = quantity;
                 }
                 }
                 else{
