@@ -55,14 +55,33 @@ class PosOrder(models.Model):
         )
         res = super()._compute_order_name()
         partner_id = self.partner_id
-        # FIX: la línea de redemption en el refund puede tener is_reward_line=False
-        # y reward_id=False (el tipo 'redemption' es custom), pero siempre tiene
-        # coupon_id seteado. Filtrar por los tres campos garantiza que no se cuente
-        # como línea de producto y genere puntos espurios en el cálculo.
-        li = [line.mapped('price_subtotal_incl') for line
-              in self.lines.filtered(
-                  lambda x: not x.is_reward_line and not x.reward_id and not x.coupon_id
-              )]
+
+        # LOG: todas las líneas del pedido para entender la composición
+        for line in self.lines:
+            _logger.warning(
+                "[loyalty] línea: product=%s qty=%s price=%s is_reward=%s reward_id=%s coupon_id=%s refunded_orderline_id=%s",
+                line.product_id.name, line.qty, line.price_subtotal_incl,
+                line.is_reward_line, line.reward_id.id if line.reward_id else None,
+                line.coupon_id.id if line.coupon_id else None,
+                line.refunded_orderline_id.id if line.refunded_orderline_id else None,
+            )
+
+        # FIX: filtrar SOLO las líneas vinculadas a la devolución (refunded_orderline_id).
+        # En un pedido mixto (reembolso + compra nueva), Odoo nativo ya suma los puntos
+        # del producto nuevo por su propio flujo. Si incluimos esas líneas aquí también,
+        # los puntos se cuentan doble. El filtro por refunded_orderline_id garantiza que
+        # solo procesamos las líneas que pertenecen al reembolso.
+        # También se excluyen líneas de reward/redemption para no contar el descuento
+        # por canje como si fuera una línea de producto.
+        refund_only_lines = self.lines.filtered(
+            lambda x: x.refunded_orderline_id
+            and not x.is_reward_line
+            and not x.reward_id
+            and not x.coupon_id
+        )
+        li = [line.mapped('price_subtotal_incl') for line in refund_only_lines]
+        _logger.warning("[loyalty] li resultante (solo líneas de devolución): %s", li)
+
         reward_line = self.refunded_order_ids.lines.filtered(
             lambda x: x.is_reward_line)
         points_cost = []
@@ -121,9 +140,9 @@ class PosOrder(models.Model):
                             rules_delta -= reward_points
                     elif rule.reward_point_mode == 'unit':
                         points_granted = rule.reward_point_amount
-                        qty = sum(
-                            self.lines.filtered(
-                                lambda x: not x.is_reward_line).mapped('qty'))
+                        # Mismo criterio que money mode: solo líneas de la devolución
+                        # para no contar doble las unidades del producto nuevo.
+                        qty = sum(refund_only_lines.mapped('qty'))
                         reward_points = qty * points_granted
                         _logger.warning("[loyalty] unit mode: card=%s qty=%s reward_points=%s", program.id, qty, reward_points)
                         rules_delta += reward_points
