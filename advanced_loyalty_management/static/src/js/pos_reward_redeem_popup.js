@@ -17,42 +17,82 @@ export class RewardPopup extends AbstractAwaitablePopup {
         this.points = useRef("points");
     }
 
-    toRedeem(ev){
-    //---validation for popup---
-            ev.state.redeemPoints = ev.points.el.value
-        if (isNaN(ev.state.redeemPoints)) {
+    toRedeem(ev) {
+        // Validación en tiempo real al cambiar el valor del input.
+        // Muestra el error visualmente pero no bloquea; el bloqueo real
+        // está en save() para cubrir el caso en que el usuario no toque
+        // el input antes de presionar Agregar.
+        ev.state.redeemPoints = ev.points.el.value;
+        const entered = parseFloat(ev.state.redeemPoints);
+        if (isNaN(entered)) {
             ev.popup.add(ErrorPopup, {
-                body: _t("Points to redeem should be a number."),
+                body: _t("Los puntos a canjear deben ser un número."),
             });
-        } else if (ev.props.min_redemption_points > 0 &&
-                   parseFloat(ev.state.redeemPoints) < ev.props.min_redemption_points) {
+        } else if (ev.props.min_redemption_points > 0 && entered < ev.props.min_redemption_points) {
             ev.popup.add(ErrorPopup, {
-                body: _t("You must redeem at least %s points.", ev.props.min_redemption_points),
+                body: _t("Debe canjear al menos %s puntos.", ev.props.min_redemption_points),
             });
-        } else if (ev.props.max_redemption_points < ev.state.redeemPoints) {
+        } else if (entered > ev.props.max_redemption_points) {
             ev.popup.add(ErrorPopup, {
-                body: _t("Points to redeem should be less than Maximum Redemption Point."),
+                body: _t("Los puntos a canjear no pueden superar el máximo permitido."),
+            });
+        } else if (entered > ev.props.available_points) {
+            ev.popup.add(ErrorPopup, {
+                body: _t(
+                    "No puede canjear %s puntos: el cliente solo tiene %s puntos disponibles.",
+                    entered,
+                    ev.props.available_points
+                ),
             });
         }
     }
 
-    save(props,ev){
-    //---after giving the points to redeem, the reward is added to orderliness
-        const selectedReward = props.selected_reward
-        const pointsOfPartner = props.order.partner.loyalty_cards[selectedReward.coupon_id].points
-        const pointsWon = props.order.couponPointChanges[selectedReward.coupon_id].points
-        const balance = pointsOfPartner + pointsWon - parseInt(ev.state.redeemPoints)
-        const order = props.order.access_token
-        selectedReward.reward.pointsToRedeem = parseInt(ev.state.redeemPoints)
-        props.close()
-        props.order.selectedCoupon = selectedReward.coupon_id
-        props.order.pointsCost = parseInt(ev.state.redeemPoints)
+    save(props, ev) {
+        // Validación definitiva al presionar Agregar. Repite los mismos controles
+        // que toRedeem para garantizar que nunca se aplique un canje inválido,
+        // incluso si el usuario no modificó el input y toRedeem no se ejecutó.
+        const entered = parseFloat(ev.state.redeemPoints);
+        if (isNaN(entered) || entered <= 0) {
+            ev.popup.add(ErrorPopup, {
+                body: _t("Ingrese una cantidad válida de puntos para canjear."),
+            });
+            return;
+        }
+        if (props.min_redemption_points > 0 && entered < props.min_redemption_points) {
+            ev.popup.add(ErrorPopup, {
+                body: _t("Debe canjear al menos %s puntos.", props.min_redemption_points),
+            });
+            return;
+        }
+        if (entered > props.max_redemption_points) {
+            ev.popup.add(ErrorPopup, {
+                body: _t("Los puntos a canjear no pueden superar el máximo permitido."),
+            });
+            return;
+        }
+        if (entered > props.available_points) {
+            // Bloqueo principal: el cliente no puede gastar puntos que no tiene
+            // confirmados en el backend, aunque el frontend los muestre como ganados
+            // en la orden actual (esos aún no están persistidos).
+            ev.popup.add(ErrorPopup, {
+                body: _t(
+                    "No puede canjear %s puntos: el cliente solo tiene %s puntos disponibles.",
+                    entered,
+                    props.available_points
+                ),
+            });
+            return;
+        }
+        const selectedReward = props.selected_reward;
+        selectedReward.reward.pointsToRedeem = entered;
+        props.close();
+        props.order.selectedCoupon = selectedReward.coupon_id;
+        props.order.pointsCost = entered;
         return props.property._applyReward(
             selectedReward.reward,
             selectedReward.coupon_id,
             selectedReward.potentialQty
         );
-
     }
     static defaultProps = {
         closePopup: _t("Cancel"),
