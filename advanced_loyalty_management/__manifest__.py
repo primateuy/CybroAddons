@@ -56,6 +56,7 @@
             'advanced_loyalty_management/static/src/js/pos_loyalty_card.js',
             'advanced_loyalty_management/static/src/js/pos_payment_screen.js',
             'advanced_loyalty_management/static/src/js/pos_ticketscreen.js',
+            'advanced_loyalty_management/static/src/js/pos_loyalty_sync.js'
         ],
     },
     'images': ['static/description/banner.jpg'],

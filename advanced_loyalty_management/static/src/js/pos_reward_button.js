@@ -126,12 +126,17 @@ patch(RewardButton.prototype,{
                 var maxRedemption = totalAmount * selectedReward.reward.max_redemption_amount / 100
                 points.push(maxRedemption/selectedReward.reward.redemption_amount)
             }
+            // Limitar el máximo canjeable al saldo real del backend para que el
+            // cliente no pueda gastar puntos que aún no están persistidos.
+            const backendBalance = this._getBaseCouponBalance(selectedReward.coupon_id);
+            const cappedMax = Math.min(points[0], backendBalance);
             await this.popup.add(RewardPopup, {
                    title: _t("Redeem Points"),
                    rewards: rewards,
                    selected_reward: selectedReward,
                    order: order,
-                   max_redemption_points: points[0],
+                   max_redemption_points: cappedMax,
+                   available_points: backendBalance,
                    min_redemption_points: selectedReward.reward.min_redemption_amount || 0,
                    property: this
             });

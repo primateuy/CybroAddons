@@ -12,11 +12,15 @@
                 <form>
                     <table style="width: 100%; border-collapse: collapse; border: 1px solid #ddd;">
                         <tr style="background-color: #f2f2f2;">
-                            <th style="padding: 8px; text-align: left;">Min</th>
-                            <th style="padding: 8px; text-align: left;">Max</th>
-                            <th style="padding: 8px; text-align: left;">To redeem</th>
+                            <th style="padding: 8px; text-align: left;">Disponibles</th>
+                            <th style="padding: 8px; text-align: left;">Mínimo</th>
+                            <th style="padding: 8px; text-align: left;">Máximo</th>
+                            <th style="padding: 8px; text-align: left;">A canjear</th>
                         </tr>
                         <tr>
+                            <td style="padding: 8px; font-weight: bold;">
+                                <t t-esc="props.available_points"/>
+                            </td>
                             <td style="padding: 8px;">
                                 <t t-esc="props.min_redemption_points || 0"/>
                             </td>

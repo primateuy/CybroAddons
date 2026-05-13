@@ -66,21 +66,38 @@ class PosOrder(models.Model):
                 line.refunded_orderline_id.id if line.refunded_orderline_id else None,
             )
 
-        # FIX: filtrar SOLO las líneas vinculadas a la devolución (refunded_orderline_id).
-        # En un pedido mixto (reembolso + compra nueva), Odoo nativo ya suma los puntos
-        # del producto nuevo por su propio flujo. Si incluimos esas líneas aquí también,
-        # los puntos se cuentan doble. El filtro por refunded_orderline_id garantiza que
-        # solo procesamos las líneas que pertenecen al reembolso.
-        # También se excluyen líneas de reward/redemption para no contar el descuento
-        # por canje como si fuera una línea de producto.
+        # Líneas de producto del reembolso: vinculadas a la orden original,
+        # sin ser reward/redemption. En un pedido mixto Odoo nativo ya suma los
+        # puntos del producto nuevo, por eso filtramos por refunded_orderline_id.
         refund_only_lines = self.lines.filtered(
             lambda x: x.refunded_orderline_id
             and not x.is_reward_line
             and not x.reward_id
             and not x.coupon_id
         )
-        li = [line.mapped('price_subtotal_incl') for line in refund_only_lines]
-        _logger.warning("[loyalty] li resultante (solo líneas de devolución): %s", li)
+
+        # Líneas de descuento promocional del reembolso.
+        # Odoo re-aplica las promociones automáticamente al crear el reembolso,
+        # generando líneas nuevas con precio POSITIVO y sin refunded_orderline_id.
+        # Precio positivo = descuento invertido: -3980 + 717.59 = -3262.41
+        # → misma base que usó la venta original para calcular los puntos.
+        # En pedidos mixtos los descuentos nuevos tienen precio negativo → excluidos.
+        refund_discount_lines = self.lines.filtered(
+            lambda x: x.is_reward_line
+            and x.reward_id
+            and x.reward_id.reward_type == 'discount'
+            and x.price_subtotal_incl > 0
+        )
+        net_refund_total = (
+            sum(refund_only_lines.mapped('price_subtotal_incl'))
+            + sum(refund_discount_lines.mapped('price_subtotal_incl'))
+        )
+        _logger.warning(
+            "[loyalty] refund lines total=%s discount lines total=%s net_refund_total=%s",
+            sum(refund_only_lines.mapped('price_subtotal_incl')),
+            sum(refund_discount_lines.mapped('price_subtotal_incl')),
+            net_refund_total,
+        )
 
         reward_line = self.refunded_order_ids.lines.filtered(
             lambda x: x.is_reward_line)
@@ -115,14 +132,14 @@ class PosOrder(models.Model):
                 rules_delta = 0
                 for rule in program.program_id.rule_ids:
                     if rule.reward_point_mode == 'money':
-                        points_granted = rule.reward_point_amount
-                        reward_points = [sum(sublist) * points_granted for
-                                         sublist in li]
-                        _logger.warning("[loyalty] money mode: card=%s li=%s reward_points=%s", program.id, li, reward_points)
-                        # FIX: el código original usaba reward_points[0], procesando
-                        # solo la primera línea del pedido. Con sum() se aplican
-                        # los puntos de todas las líneas de producto correctamente.
-                        rules_delta += sum(reward_points)
+                        # Usar el importe neto (producto + descuentos revertidos) para
+                        # que la deducción sea simétrica con los puntos ganados en la venta.
+                        points_delta = net_refund_total * rule.reward_point_amount
+                        _logger.warning(
+                            "[loyalty] money mode: card=%s net_refund_total=%s points_delta=%s",
+                            program.id, net_refund_total, points_delta,
+                        )
+                        rules_delta += points_delta
                     elif rule.reward_point_mode == 'order':
                         reward_points = rule.reward_point_amount
                         reward_line_ids = len(reward_line)
@@ -211,11 +228,23 @@ class PosOrder(models.Model):
         refund_total = sum(non_reward_lines.mapped('price_subtotal_incl'))
         refund_qty = sum(non_reward_lines.mapped('qty'))
         for card in cards:
+            rules_delta = 0
             for rule in card.program_id.rule_ids:
                 if rule.reward_point_mode == 'money':
-                    card.points += refund_total * rule.reward_point_amount
+                    rules_delta += refund_total * rule.reward_point_amount
                 elif rule.reward_point_mode == 'unit':
-                    card.points += refund_qty * rule.reward_point_amount
+                    rules_delta += refund_qty * rule.reward_point_amount
                 elif rule.reward_point_mode == 'order':
-                    card.points -= rule.reward_point_amount
+                    rules_delta -= rule.reward_point_amount
+            # Aplicar redondeo antes de escribir, igual que en _compute_order_name.
+            redemption_reward = card.program_id.reward_ids.filtered(
+                lambda r: r.reward_type == 'redemption'
+            )
+            if redemption_reward and redemption_reward[0].rounding_mode:
+                rw = redemption_reward[0]
+                abs_rounded = _apply_rounding(
+                    abs(rules_delta), rw.rounding_precision or 0, rw.rounding_mode
+                )
+                rules_delta = -abs_rounded if rules_delta < 0 else abs_rounded
+            card.points += rules_delta
         return order_id

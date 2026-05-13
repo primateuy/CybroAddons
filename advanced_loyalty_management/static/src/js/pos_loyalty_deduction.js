@@ -41,6 +41,19 @@ patch(Order.prototype, {
                 // points_cost de las líneas de reward de la orden original.
                 let rewardPoints = JSON.parse(localStorage.getItem("pointsCost"));
 
+                // Descuentos promocionales re-aplicados por Odoo al crear el reembolso:
+                // aparecen como is_reward_line sin refunded_orderline_id y precio positivo
+                // (el descuento original era negativo, ahora está invertido).
+                // Hay que sumarlos a la base de puntos igual que en pos_refund.py.
+                const reversedDiscountTotal = this.get_orderlines()
+                    .filter(
+                        (line) =>
+                            line.is_reward_line &&
+                            !line.refunded_orderline_id &&
+                            line.get_price_with_tax() > 0
+                    )
+                    .reduce((sum, line) => sum + line.get_price_with_tax(), 0);
+
                 this.getLoyaltyPoints().forEach((record) => {
                     let { couponId, points, program } = record;
                     if (couponId > 0) {
@@ -79,6 +92,14 @@ patch(Order.prototype, {
                                                 ? rule.reward_point_amount
                                                 : 0;
                                 }
+                            }
+                            // Ajuste por descuentos promocionales revertidos.
+                            // Solo aplica al modo money; unit y order ya usan qty/orden.
+                            if (rule.reward_point_mode === "money" && reversedDiscountTotal !== 0) {
+                                res -= roundPrecision(
+                                    rule.reward_point_amount * reversedDiscountTotal,
+                                    0.01
+                                );
                             }
                         });
 
@@ -134,43 +155,50 @@ patch(Order.prototype, {
                         let res = 0;
                         let ruleId = [];
 
+                        // Para money y unit usar el NETO de todas las líneas no-reward,
+                        // igual que _process_order en Python usa sum(ALL non_reward_lines).
+                        // Un pedido mixto (producto positivo + devolución manual) debe
+                        // mostrar el delta neto, no solo la parte negativa.
+                        const allNonRewardLines = this.get_orderlines().filter(
+                            (line) => !line.is_reward_line
+                        );
+
                         programs.rules.forEach((rule) => {
                             ruleId.push(rule.id);
-                            // orderModeProcessed evita descontar el punto de orden
-                            // más de una vez cuando hay múltiples líneas negativas.
-                            let orderModeProcessed = false;
-                            for (let line of unlinkedRefundLines) {
-                                switch (rule.reward_point_mode) {
-                                    case "money":
+                            switch (rule.reward_point_mode) {
+                                case "money":
+                                    for (let line of allNonRewardLines) {
                                         res -= roundPrecision(
                                             rule.reward_point_amount * line.get_price_with_tax(),
                                             0.01
                                         );
-                                        break;
-                                    case "unit":
+                                    }
+                                    break;
+                                case "unit":
+                                    for (let line of allNonRewardLines) {
                                         res -= rule.reward_point_amount * line.get_quantity();
-                                        break;
-                                    case "order":
-                                        if (!orderModeProcessed) {
-                                            res += rule.reward_point_amount;
-                                            orderModeProcessed = true;
-                                        }
-                                        break;
-                                }
+                                    }
+                                    break;
+                                case "order":
+                                    // Un solo ajuste de orden sin importar cuántas líneas hay.
+                                    res += rule.reward_point_amount;
+                                    break;
                             }
                         });
 
-                        // Aplicar redondeo al total de puntos perdidos si el programa
-                        // tiene una redemption reward con modo de redondeo configurado.
+                        // Aplicar redondeo con el patrón de valor absoluto, igual que
+                        // _process_order en Python, para que un pedido neto positivo
+                        // (ganancia de puntos) también se redondee correctamente.
                         const redemptionReward = this.pos.rewards.find(
                             (r) => r.program_id === program && r.reward_type === "redemption"
                         );
                         if (redemptionReward?.rounding_mode) {
-                            res = _applyRounding(
-                                res,
+                            const absRounded = _applyRounding(
+                                Math.abs(res),
                                 redemptionReward.rounding_precision ?? 0,
                                 redemptionReward.rounding_mode
                             );
+                            res = res < 0 ? -absRounded : absRounded;
                         }
 
                         let currentBalance = balance - res;
@@ -185,9 +213,10 @@ patch(Order.prototype, {
             }
         }
 
-        // Guardar en el store global para que export_for_printing lo incluya
-        // en el recibo a través de pos_loyalty_deduction_receipt.js.
-        this.pos.lostPoints = valsList;
+        // Guardar en la orden (no en this.pos) para que cada orden tenga sus propios
+        // puntos perdidos. Si se guardara en this.pos, la venta siguiente mostraría
+        // los puntos del reembolso anterior en su recibo.
+        this.lostPoints = valsList;
         return valsList;
     },
 });
