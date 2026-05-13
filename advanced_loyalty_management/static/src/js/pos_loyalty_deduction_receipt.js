@@ -8,7 +8,9 @@ patch(Order.prototype, {
     //--------to show the deducted loyalty points details in the order receipt
         const result = super.export_for_printing(...arguments);
         result.RefundOrder = this.paymentlines[0]?.order._isRefundOrder();
-        result.pointsDeducted = this.pos.lostPoints;
+        // this.lostPoints se setea en deductLoyaltyPoints() sobre la orden misma.
+        // Para ventas normales (no reembolso) queda undefined → array vacío → 0 en el recibo.
+        result.pointsDeducted = this.lostPoints || [];
         return result;
     },
 });

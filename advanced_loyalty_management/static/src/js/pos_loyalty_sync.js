@@ -22,13 +22,16 @@ patch(Order.prototype, {
         const oldPartner = this.get_partner();
         super.set_partner(partner);
         if (partner && partner !== oldPartner && partner.id) {
-            // fetchCoupons es un ORM call directo, no usa el mutex de _updateRewards.
-            // Cuando resuelve actualiza couponCache con los saldos reales del backend.
-            // No hace falta llamar _updateRewards de nuevo: getLoyaltyPoints() lee
-            // couponCache[id].balance en cada render, así que el próximo ciclo de
-            // OWL ya muestra el saldo actualizado sin ningún ciclo extra de rewards.
+            // Restringir el fetch a los programas cargados en esta config de POS.
+            // Sin este filtro, fetchCoupons trae tarjetas de otros programas que no
+            // están en program_by_id, causando un crash en _getLoyaltyPointsRepr al
+            // intentar leer program_type de undefined.
+            const loadedProgramIds = Object.keys(this.pos.program_by_id).map(Number);
             this.pos
-                .fetchCoupons([["partner_id", "=", partner.id]], 20)
+                .fetchCoupons([
+                    ["partner_id", "=", partner.id],
+                    ["program_id", "in", loadedProgramIds],
+                ], 20)
                 .catch(() => {});
         }
     },
