@@ -19,6 +19,8 @@
 #    If not, see <http://www.gnu.org/licenses/>.
 #
 #############################################################################
+import ast
+import json
 import logging
 import math
 
@@ -45,6 +47,32 @@ class PosOrder(models.Model):
 
     check = fields.Boolean()
     redemption_points_deducted = fields.Boolean(default=False)
+
+    @staticmethod
+    def _forum_rule_matches_partner(rule, partner):
+        """Verifica si el partner cumple el customer_domain de la regla.
+        Replica la lógica de ruleMatchesPartnerCustomerDomain en JS:
+        si no hay dominio → aplica; si hay dominio → el partner debe cumplirlo.
+        Usa filtered_domain para no hacer una query SQL extra."""
+        domain_str = getattr(rule, 'customer_domain', None)
+        if not domain_str or str(domain_str).strip() in ('', '[]', 'null'):
+            return True
+        if not partner:
+            return False
+        try:
+            try:
+                domain = json.loads(domain_str)
+            except (json.JSONDecodeError, TypeError):
+                domain = ast.literal_eval(domain_str)
+            if not domain:
+                return True
+            return bool(partner.filtered_domain(domain))
+        except Exception:
+            _logger.warning(
+                "[loyalty] No se pudo evaluar customer_domain '%s' para regla %s, se permite por defecto",
+                domain_str, rule.id
+            )
+            return True
 
     def _compute_order_name(self):
         """Compute the loyalty points when order is refunded"""
@@ -131,6 +159,15 @@ class PosOrder(models.Model):
                 # en _applyRounding de pos_loyalty_deduction.js.
                 rules_delta = 0
                 for rule in program.program_id.rule_ids:
+                    # Respetar el customer_domain de la regla: si el partner no cumple
+                    # el dominio, esta regla no le aplica → no se toca el delta.
+                    # Replica ruleMatchesPartnerCustomerDomain() del módulo JS.
+                    if not self._forum_rule_matches_partner(rule, partner_id):
+                        _logger.warning(
+                            "[loyalty] regla %s excluida por customer_domain para partner %s",
+                            rule.id, partner_id.id,
+                        )
+                        continue
                     if rule.reward_point_mode == 'money':
                         # Usar el importe neto (producto + descuentos revertidos) para
                         # que la deducción sea simétrica con los puntos ganados en la venta.
@@ -230,6 +267,10 @@ class PosOrder(models.Model):
         for card in cards:
             rules_delta = 0
             for rule in card.program_id.rule_ids:
+                # Mismo guard que en _compute_order_name: si la regla tiene
+                # customer_domain y el partner no lo cumple, se omite.
+                if not self._forum_rule_matches_partner(rule, pos_order.partner_id):
+                    continue
                 if rule.reward_point_mode == 'money':
                     rules_delta += refund_total * rule.reward_point_amount
                 elif rule.reward_point_mode == 'unit':
