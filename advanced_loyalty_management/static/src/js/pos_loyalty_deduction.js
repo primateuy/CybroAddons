@@ -4,6 +4,65 @@ import { roundPrecision } from "@web/core/utils/numbers";
 import { _t } from "@web/core/l10n/translation";
 import { patch } from "@web/core/utils/patch";
 
+// Evalúa un nodo de dominio Odoo contra un partner cargado en el POS.
+// Replica la lógica de evalDomainNode en pos_forum_loyalty_customer_domain.js
+// para que deductLoyaltyPoints respete el mismo filtro de dominio que pointsForPrograms.
+function _evalDomainNode(partner, node) {
+    if (!Array.isArray(node)) return true;
+    if (
+        typeof node[0] === "string" &&
+        !["&", "|", "!"].includes(node[0]) &&
+        node.length === 3
+    ) {
+        const [field, op, val] = node;
+        const raw = partner?.[field];
+        // Many2many (ej: category_id): puede ser [id, ...] o [[id, "name"], ...]
+        const ids = Array.isArray(raw)
+            ? raw.map((x) => (Array.isArray(x) ? x[0] : x))
+            : raw !== undefined && raw !== false && raw !== null
+            ? [raw]
+            : [];
+        const toId = (v) => (Array.isArray(v) ? v[0] : v);
+        switch (op) {
+            case "=":
+                return ids.length ? ids.includes(toId(val)) : raw === val;
+            case "!=":
+                return ids.length ? !ids.includes(toId(val)) : raw !== val;
+            case "in":
+                return (Array.isArray(val) ? val : []).some(
+                    (v) => ids.includes(v) || raw === v
+                );
+            case "not in":
+                return !(Array.isArray(val) ? val : []).some(
+                    (v) => ids.includes(v) || raw === v
+                );
+            default:
+                return true;
+        }
+    }
+    const token = node[0];
+    if (token === "!") return !_evalDomainNode(partner, node[1]);
+    if (token === "&")
+        return _evalDomainNode(partner, node[1]) && _evalDomainNode(partner, node[2]);
+    if (token === "|")
+        return _evalDomainNode(partner, node[1]) || _evalDomainNode(partner, node[2]);
+    return node.every((item) => _evalDomainNode(partner, item));
+}
+
+// Devuelve true si el partner cumple el customer_domain de la regla.
+// Si no hay dominio o no se puede parsear, permite por defecto.
+function _ruleMatchesPartner(partner, rule) {
+    if (!rule.customer_domain || rule.customer_domain === "[]") return true;
+    if (!partner) return false;
+    try {
+        const domain = JSON.parse(rule.customer_domain);
+        if (!domain || !domain.length) return true;
+        return _evalDomainNode(partner, domain);
+    } catch {
+        return true;
+    }
+}
+
 // Aplica redondeo a los puntos según el modo configurado en el programa.
 // Equivalente en Python: _apply_rounding() en pos_refund.py.
 function _applyRounding(points, precision, mode) {
@@ -44,14 +103,15 @@ patch(Order.prototype, {
                 // Descuentos promocionales re-aplicados por Odoo al crear el reembolso:
                 // aparecen como is_reward_line sin refunded_orderline_id y precio positivo
                 // (el descuento original era negativo, ahora está invertido).
-                // Hay que sumarlos a la base de puntos igual que en pos_refund.py.
+                // Solo se incluyen si refund_allowed != false (igual que pos_refund.py).
                 const reversedDiscountTotal = this.get_orderlines()
-                    .filter(
-                        (line) =>
-                            line.is_reward_line &&
-                            !line.refunded_orderline_id &&
-                            line.get_price_with_tax() > 0
-                    )
+                    .filter((line) => {
+                        if (!line.is_reward_line || line.refunded_orderline_id || line.get_price_with_tax() <= 0) {
+                            return false;
+                        }
+                        const reward = this.pos.rewards.find((r) => r.id === line.reward_id);
+                        return !reward || reward.refund_allowed !== false;
+                    })
                     .reduce((sum, line) => sum + line.get_price_with_tax(), 0);
 
                 this.getLoyaltyPoints().forEach((record) => {
@@ -63,10 +123,22 @@ patch(Order.prototype, {
                         let res = 0;
                         let ruleId = [];
 
+                        const partner = this.get_partner();
+                        // Solo procesar reglas cuyo customer_domain aplica al partner.
+                        // Mismo filtro que pos_forum_loyalty_customer_domain usa en pointsForPrograms.
+                        const matchingRules = programs.rules.filter((r) =>
+                            _ruleMatchesPartner(partner, r)
+                        );
+                        if (!matchingRules.length) {
+                            // Ninguna regla aplica → el programa no afecta a este cliente,
+                            // no mostrar puntos negativos.
+                            return;
+                        }
+
                         // Calcular cuántos puntos se ganaron en la venta original
                         // para saber cuántos hay que restar en el reembolso.
                         // res queda positivo = puntos a descontar del balance.
-                        programs.rules.forEach((rule) => {
+                        matchingRules.forEach((rule) => {
                             ruleId.push(rule.id);
                             let totalQuantity = 0;
                             for (let line of refundedLines) {
@@ -101,7 +173,7 @@ patch(Order.prototype, {
                                     0.01
                                 );
                             }
-                        });
+                        }); // fin matchingRules.forEach
 
                         // FIX: el loop original iteraba refundedLines y restaba
                         // pointscost una vez por cada línea que cumpliera la condición,
@@ -163,7 +235,15 @@ patch(Order.prototype, {
                             (line) => !line.is_reward_line
                         );
 
-                        programs.rules.forEach((rule) => {
+                        const partnerUnlinked = this.get_partner();
+                        const matchingRulesUnlinked = programs.rules.filter((r) =>
+                            _ruleMatchesPartner(partnerUnlinked, r)
+                        );
+                        if (!matchingRulesUnlinked.length) {
+                            return;
+                        }
+
+                        matchingRulesUnlinked.forEach((rule) => {
                             ruleId.push(rule.id);
                             switch (rule.reward_point_mode) {
                                 case "money":

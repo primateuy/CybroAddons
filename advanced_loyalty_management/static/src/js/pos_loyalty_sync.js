@@ -32,6 +32,19 @@ patch(Order.prototype, {
                     ["partner_id", "=", partner.id],
                     ["program_id", "in", loadedProgramIds],
                 ], 20)
+                .then(() => {
+                    // BUG Odoo: addPartners agrega IDs al Set como strings (Object.entries),
+                    // fetchCoupons los agrega como números. Un JS Set trata "936171" y 936171
+                    // como valores distintos → getLoyaltyCards devuelve el mismo objeto dos
+                    // veces → OWL lanza "duplicate key in t-foreach".
+                    // Fix: normalizar todos los IDs del Set a número después del fetch.
+                    const set = this.pos.partnerId2CouponIds[partner.id];
+                    if (set) {
+                        this.pos.partnerId2CouponIds[partner.id] = new Set(
+                            [...set].map(Number)
+                        );
+                    }
+                })
                 .catch(() => {});
         }
     },

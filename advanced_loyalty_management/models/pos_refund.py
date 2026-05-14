@@ -115,6 +115,7 @@ class PosOrder(models.Model):
             and x.reward_id
             and x.reward_id.reward_type == 'discount'
             and x.price_subtotal_incl > 0
+            and x.reward_id.refund_allowed
         )
         net_refund_total = (
             sum(refund_only_lines.mapped('price_subtotal_incl'))
