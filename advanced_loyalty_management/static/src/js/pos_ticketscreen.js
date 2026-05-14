@@ -57,6 +57,19 @@ patch(TicketScreen.prototype, {
             } else {
                 const quantity = Math.abs(parseFloat(buffer));
                 if(orderline.is_reward_line == true){
+                    // Bloquear reembolso si el descuento tiene refund_allowed = false.
+                    const reward = this.pos.rewards.find((r) => r.id === orderline.reward_id);
+                    if (reward && reward.reward_type === 'discount' && reward.refund_allowed === false) {
+                        this.numberBuffer.reset();
+                        this.popup.add(ErrorPopup, {
+                            title: _t("Descuento no reembolsable"),
+                            body: _t(
+                                "El descuento \"%s\" no puede ser reembolsado.",
+                                reward.description || reward.reward_type
+                            ),
+                        });
+                        return;
+                    }
                 if(quantity > 0){
                     toRefundDetail.qty = quantity;
                 }

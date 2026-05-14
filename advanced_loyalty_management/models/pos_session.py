@@ -39,7 +39,8 @@ class PosSession(models.Model):
             ['redemption_point', 'redemption_amount', 'max_redemption_amount',
              'redemption_frequency', 'redemption_frequency_unit',
              'redemption_eligibility', 'max_redemption_type',
-             'min_redemption_amount', 'rounding_precision', 'rounding_mode'])
+             'min_redemption_amount', 'rounding_precision', 'rounding_mode',
+             'refund_allowed'])
         return result
 
     def _loader_params_res_partner(self):

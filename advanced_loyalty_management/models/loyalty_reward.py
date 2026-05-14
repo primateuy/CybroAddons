@@ -75,6 +75,14 @@ class LoyaltyReward(models.Model):
         [('normal', 'Normal'), ('up', 'Round Up'), ('down', 'Round Down')],
         string='Rounding Mode',
         help="How to round earned points. Leave empty to disable rounding.")
+    refund_allowed = fields.Boolean(
+        string='Aplicable en Reembolso',
+        default=True,
+        help="Si está activo, este descuento se revierte en el reembolso y se incluye "
+             "en el cálculo de puntos. Desactivar para descuentos que no deben "
+             "afectar el importe neto del reembolso (ej: descuento empleado, "
+             "día de shopping)."
+    )
 
     @api.depends('reward_type', 'reward_product_id', 'discount_mode',
                  'discount', 'currency_id', 'discount_applicability',
