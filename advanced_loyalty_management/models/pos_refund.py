@@ -261,6 +261,12 @@ class PosOrder(models.Model):
         non_reward_lines = pos_order.lines.filtered(lambda x: not x.is_reward_line)
         if not any(line.qty < 0 for line in non_reward_lines):
             return order_id
+        # For positive-net orders (mixed sale + small refund) Odoo native already
+        # wrote the correct net points via coupon_point_changes; our override would
+        # double-count the positive lines.  Only proceed when the net total is
+        # negative (pure refund or mixed order that ends up owing a refund).
+        if pos_order.amount_total >= 0:
+            return order_id
         cards = self.env['loyalty.card'].search(
             [('partner_id', '=', pos_order.partner_id.id)])
         refund_total = sum(non_reward_lines.mapped('price_subtotal_incl'))

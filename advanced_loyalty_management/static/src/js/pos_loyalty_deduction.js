@@ -114,7 +114,7 @@ patch(Order.prototype, {
                     })
                     .reduce((sum, line) => sum + line.get_price_with_tax(), 0);
 
-                this.getLoyaltyPoints().forEach((record) => {
+                this.getLoyaltyPoints(true).forEach((record) => {
                     let { couponId, points, program } = record;
                     if (couponId > 0) {
                         let loyaltyCard = this.pos.couponCache[couponId];
@@ -205,6 +205,16 @@ patch(Order.prototype, {
                             );
                         }
 
+                        // Orden mixta: hay líneas de venta regulares además del reembolso.
+                        // Usar puntos netos (ganados en la venta − perdidos en el reembolso)
+                        // para mostrar un único bloque en la UI en lugar de dos separados.
+                        const hasRegularSaleLines = this.get_orderlines().some(
+                            (l) => !l.is_reward_line && !l.refunded_orderline_id && l.get_quantity() > 0
+                        );
+                        if (hasRegularSaleLines) {
+                            res -= points.won || 0;
+                        }
+
                         let currentBalance = balance - res;
                         valsList.push({
                             lostPoint: res,
@@ -218,7 +228,7 @@ patch(Order.prototype, {
                 // --- DEVOLUCIÓN DESVINCULADA ---
                 // Líneas con qty negativa ingresadas manualmente sin referenciar
                 // una orden original. Se recalculan los puntos según las reglas.
-                this.getLoyaltyPoints().forEach((record) => {
+                this.getLoyaltyPoints(true).forEach((record) => {
                     let { couponId, points, program } = record;
                     if (couponId > 0) {
                         let loyaltyCard = this.pos.couponCache[couponId];
@@ -298,5 +308,16 @@ patch(Order.prototype, {
         // los puntos del reembolso anterior en su recibo.
         this.lostPoints = valsList;
         return valsList;
+    },
+
+    // True cuando la orden tiene líneas de reembolso o total negativo.
+    // Usado en el template para suprimir el bloque estándar de pos_loyalty
+    // y mostrar en su lugar el bloque unificado de puntos netos.
+    _isRefundOrMixedOrder() {
+        const lines = this.get_orderlines();
+        return (
+            lines.some((l) => l.refunded_orderline_id && l.get_quantity() !== 0) ||
+            this.get_total_with_tax() < 0
+        );
     },
 });

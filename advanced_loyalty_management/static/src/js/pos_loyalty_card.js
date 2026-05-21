@@ -32,7 +32,6 @@ patch(Order.prototype,{
             const redemptionReward = this.pos.rewards.find(
                 r => r.program_id === program && r.reward_type === 'redemption'
             );
-            if (!redemptionReward) continue;
 
             let correction = 0;
             for (const line of this._get_reward_lines()) {
@@ -54,7 +53,7 @@ patch(Order.prototype,{
                 change.points -= correction;
             }
 
-            if (redemptionReward.rounding_mode) {
+            if (redemptionReward?.rounding_mode) {
                 change.points = _applyRounding(
                     change.points,
                     redemptionReward.rounding_precision ?? 0,
@@ -135,7 +134,11 @@ patch(Order.prototype,{
         ]
     },
 
-    getLoyaltyPoints() {
+    getLoyaltyPoints(_skipRefundCheck = false) {
+        // En órdenes con reembolso el bloque unificado de deductLoyaltyPoints
+        // reemplaza al bloque estándar; retornar vacío para ocultar este último.
+        // _skipRefundCheck=true lo usan las llamadas internas de deductLoyaltyPoints.
+        if (!_skipRefundCheck && this._isRefundOrMixedOrder()) return [];
         //------change is added to loyalty points---
         // map: couponId -> LoyaltyPoints
         const loyaltyPoints = {};
