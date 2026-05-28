@@ -46,8 +46,6 @@
             'advanced_loyalty_management/static/src/js/pos_loyalty_deduction.js',
             'advanced_loyalty_management/static/src/xml/pos_loyalty_receipt.xml',
             'advanced_loyalty_management/static/src/js/pos_loyalty_deduction_receipt.js',
-            'advanced_loyalty_management/static/src/xml/pos_loyalty_change.xml',
-            'advanced_loyalty_management/static/src/js/pos_loyalty_change.js',
             'advanced_loyalty_management/static/src/xml/pos_loyalty_popup.xml',
             'advanced_loyalty_management/static/src/js/pos_loyalty_popups.js',
             'advanced_loyalty_management/static/src/js/pos_reward_button.js',
