@@ -2,6 +2,7 @@
 import { Order } from "@point_of_sale/app/store/models";
 import { patch } from "@web/core/utils/patch";
 import { ErrorPopup } from "@point_of_sale/app/errors/popups/error_popup";
+import { _t } from "@web/core/l10n/translation";
 
 patch(Order.prototype, {
 /**
@@ -14,8 +15,8 @@ patch(Order.prototype, {
         const quantity = orderLines.map(line => line.quantity);
         if (quantity.includes(0)) {
             this.env.services.popup.add(ErrorPopup, {
-                title: 'Zero quantity not allowed',
-                body: 'Only a positive quantity is allowed for confirming the order.',
+                title: _t('Zero quantity not allowed'),
+                body: _t('Only a positive quantity is allowed for confirming the order.'),
             });
         } else {
             return super.pay(...arguments);
